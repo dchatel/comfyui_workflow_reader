@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflow Reader</title>
+<style>
+  :root { --bg:#1b1b1b; --bar:#262626; --line:#3a3a3a; --fg:#ddd; --dim:#999; --acc:#6aa8ff; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px system-ui, sans-serif; overflow:hidden; }
+  #bar { position:fixed; top:0; left:0; right:0; height:40px; display:flex; align-items:center; gap:8px; padding:0 10px; background:var(--bar); border-bottom:1px solid var(--line); z-index:3; }
+  #bar button, #panel button { background:#333; color:var(--fg); border:1px solid #444; border-radius:4px; padding:4px 10px; cursor:pointer; font:inherit; }
+  #bar button:hover, #panel button:hover { background:#3d3d3d; }
+  #crumbs { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--dim); }
+  #crumbs a { color:var(--fg); cursor:pointer; text-decoration:none; }
+  #crumbs a:hover { color:var(--acc); }
+  #search { background:#1e1e1e; color:var(--fg); border:1px solid #444; border-radius:4px; padding:4px 8px; width:220px; font:inherit; }
+  #count { color:var(--dim); min-width:44px; }
+  #view { position:fixed; top:40px; left:0; right:0; bottom:0; width:100%; height:calc(100% - 40px); cursor:grab; user-select:none;
+    background-color:var(--bg); background-image:radial-gradient(#2c2c2c 1px, transparent 1px); background-size:20px 20px; }
+  #view.panning { cursor:grabbing; }
+  #empty { position:fixed; inset:40px 0 0 0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--dim); pointer-events:none; font-size:15px; }
+  #drop { position:fixed; inset:0; background:rgba(40,80,140,.35); border:3px dashed var(--acc); display:none; align-items:center; justify-content:center; font-size:22px; z-index:10; pointer-events:none; }
+  body.dragging #drop { display:flex; }
+  #toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:#333; border:1px solid #555; padding:6px 14px; border-radius:6px; opacity:0; transition:opacity .2s; pointer-events:none; z-index:11; }
+  #toast.on { opacity:1; }
+  #panel { position:fixed; top:40px; right:0; bottom:0; width:400px; max-width:100%; background:#232323; border-left:1px solid var(--line); overflow:auto; padding:12px 14px 30px; display:none; z-index:2; user-select:text; }
+  #panel.on { display:block; }
+  #panel h2 { margin:0 0 2px; font-size:16px; }
+  #panel h3 { margin:16px 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); }
+  #panel .meta { color:var(--dim); font-size:12px; margin-bottom:8px; word-break:break-all; }
+  #panel .row { display:flex; gap:6px; align-items:baseline; padding:2px 0; }
+  #panel .row .k { color:var(--dim); flex:none; }
+  #panel .row a { color:var(--acc); cursor:pointer; }
+  #panel .wv { margin:4px 0 10px; }
+  #panel .wv .hd { display:flex; justify-content:space-between; align-items:center; color:var(--dim); font-size:12px; }
+  #panel .wv .hd button { padding:1px 8px; font-size:11px; }
+  #panel pre { margin:3px 0 0; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:6px 8px; white-space:pre-wrap; word-break:break-word; font:12px ui-monospace, Consolas, monospace; max-height:360px; overflow:auto; }
+  #panel .close { float:right; }
+  .group-title { font-weight:600; fill:#ccc; }
+  .node-title { font-weight:600; fill:#ddd; font-size:13px; }
+  .slot { font-size:11px; fill:#bbb; }
+  .link { fill:none; stroke-width:2.5; opacity:.75; }
+  .link.ue { stroke-dasharray:6 5; opacity:.4; }
+  svg.dim .link { opacity:.12; }
+  svg.dim .link.hl { opacity:1; stroke-width:4; }
+  .node.sel .frame { stroke:#fff; stroke-width:2; }
+  .node.match .frame { stroke:#ffd54a; stroke-width:3; }
+  .node.flash .frame { stroke:#6aa8ff; stroke-width:5; }
+  .node.muted { opacity:.4; }
+  .node .badge { cursor:pointer; fill:#8ab4ff; font-size:13px; }
+  .body { width:100%; height:100%; overflow:hidden; display:flex; flex-direction:column; gap:3px; padding:2px 8px 4px; font:12px system-ui, sans-serif; color:#ddd; }
+  .w { display:flex; gap:6px; align-items:center; min-height:18px; flex:none; }
+  .w .k { color:#9a9a9a; flex:none; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .val { flex:1; min-width:0; background:#222; border-radius:4px; padding:1px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; cursor:copy; user-select:text; }
+  .val:hover { background:#2d3a4d; }
+  .w.txt { flex:1 1 auto; min-height:22px; align-items:stretch; }
+  .w.txt .val { white-space:pre-wrap; word-break:break-word; text-align:left; font-size:11px; line-height:1.35; padding:3px 6px; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="openBtn" title="Ouvrir un fichier (.json, .png, .webp, .mp4, .webm…)">Ouvrir…</button>
+  <input id="file" type="file" hidden accept=".json,.png,.webp,.mp4,.mov,.webm,.mkv,application/json,image/*,video/*">
+  <span id="crumbs"></span>
+  <input id="search" placeholder="Rechercher… (Entrée = suivant)">
+  <span id="count"></span>
+  <button id="fitBtn" title="Ajuster la vue (F)">Ajuster</button>
+  <button id="copyBtn" title="Copier le workflow JSON">Copier JSON</button>
+  <button id="saveBtn" title="Enregistrer le workflow en .json">.json</button>
+</div>
+<svg id="view" xmlns="http://www.w3.org/2000/svg"><g id="world"></g></svg>
+<div id="empty"><div>Déposez un workflow ComfyUI ici</div><div style="font-size:12px">.json · .png · .webp · .mp4 · .webm — ou collez (Ctrl+V)</div></div>
+<div id="panel"></div>
+<div id="drop">Déposer le fichier</div>
+<div id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+const NS = 'http://www.w3.org/2000/svg';
+const svg = $('#view'), world = $('#world'), panel = $('#panel');
+const TITLE_H = 26, SLOT_H = 20;
+const CONTROL = new Set(['fixed', 'increment', 'decrement', 'randomize']);
+const TYPE_COLORS = { MODEL:'#B39DDB', CLIP:'#FFD500', VAE:'#FF6E6E', CONDITIONING:'#FFA931', LATENT:'#FF9CF9', IMAGE:'#64B5F6', MASK:'#81C784',
+  CONTROL_NET:'#00D78D', CLIP_VISION:'#A8DADC', CLIP_VISION_OUTPUT:'#ad7452', STYLE_MODEL:'#C2FFAE', NOISE:'#B0B0B0', SAMPLER:'#ECB4B4',
+  SIGMAS:'#CDFFCD', GUIDER:'#66FFFF', INT:'#6fa88f', FLOAT:'#7dbd8f', STRING:'#8fae7a', BOOLEAN:'#69b38a', AUDIO:'#9a8cff', VIDEO:'#4dd0e1' };
+const API_NAME_TYPES = { positive:'CONDITIONING', negative:'CONDITIONING', conditioning:'CONDITIONING', latent_image:'LATENT', samples:'LATENT', pixels:'IMAGE', images:'IMAGE' };
+const typeColor = t => TYPE_COLORS[String(t).toUpperCase()] || '#9A9';
+const td = new TextDecoder('utf-8'), tl = new TextDecoder('latin1');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+const fmt = v => typeof v === 'string' ? v : v === undefined ? '' : JSON.stringify(v);
+
+let doc = null;      // { workflow, prompt, defs, name }
+let stack = [];      // [{ title, graph, view }]
+let view = { x: 0, y: 0, k: 1 };
+let nodeById = new Map(), selected = null, matches = [], matchIdx = -1;
+const cur = () => stack[stack.length - 1];
+
+// ---------- extraction ----------
+async function inflate(bytes) {
+  const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+
+async function pngTexts(b) {
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), out = {};
+  for (let p = 8; p + 8 <= b.length;) {
+    const len = dv.getUint32(p), type = tl.decode(b.subarray(p + 4, p + 8)), d = b.subarray(p + 8, p + 8 + len);
+    p += 12 + len;
+    const z = d.indexOf(0), key = tl.decode(d.subarray(0, z));
+    if (type === 'tEXt') out[key] = tl.decode(d.subarray(z + 1));
+    else if (type === 'zTXt') out[key] = tl.decode(await inflate(d.subarray(z + 2)));
+    else if (type === 'iTXt') {
+      let q = d.indexOf(0, z + 3) + 1; q = d.indexOf(0, q) + 1;
+      const t = d.subarray(q);
+      out[key] = td.decode(d[z + 1] ? await inflate(t) : t);
+    } else if (type === 'IEND') break;
+  }
+  return out;
+}
+
+// End index (exclusive) of the JSON object starting at s[i] === '{', or -1.
+function jsonEnd(s, i) {
+  let depth = 0, str = false;
+  for (let j = i; j < s.length; j++) {
+    const c = s[j];
+    if (str) { if (c === '\\') j++; else if (c === '"') str = false; }
+    else if (c === '"') str = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return j + 1;
+  }
+  return -1;
+}
+
+// ComfyUI webp: EXIF strings like "workflow:{...}" / "prompt:{...}"
+function webpTexts(b) {
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), out = {};
+  for (let p = 12; p + 8 <= b.length;) {
+    const type = tl.decode(b.subarray(p, p + 4)), len = dv.getUint32(p + 4, true);
+    if (type === 'EXIF') {
+      const s = td.decode(b.subarray(p + 8, p + 8 + len));
+      for (const k of ['workflow', 'prompt']) {
+        const i = s.indexOf(k + ':{');
+        const e = i < 0 ? -1 : jsonEnd(s, i + k.length + 1);
+        if (e > 0) out[k] = s.slice(i + k.length + 1, e);
+      }
+    }
+    p += 8 + len + (len & 1);
+  }
+  return out;
+}
+
+// MP4/MOV metadata (ffmpeg movflags=use_metadata_tags: moov/[udta/]meta with keys + ilst)
+function mp4Texts(b) {
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), out = {};
+  const boxes = (s, e) => {
+    const r = [];
+    for (let p = s; p + 8 <= e;) {
+      let size = dv.getUint32(p), h = 8;
+      if (size === 1) { size = Number(dv.getBigUint64(p + 8)); h = 16; } else if (size === 0) size = e - p;
+      if (size < h) break;
+      r.push({ type: tl.decode(b.subarray(p + 4, p + 8)), s: p + h, e: Math.min(p + size, e) });
+      p += size;
+    }
+    return r;
+  };
+  const find = (list, t) => list.filter(x => x.type === t);
+  const readMeta = meta => {
+    const s = tl.decode(b.subarray(meta.s + 4, meta.s + 8)) === 'hdlr' ? meta.s : meta.s + 4;
+    const ch = boxes(s, meta.e), names = [];
+    for (const keys of find(ch, 'keys')) {
+      let p = keys.s + 8;
+      for (let i = 0, n = dv.getUint32(keys.s + 4); i < n; i++) { const sz = dv.getUint32(p); names.push(td.decode(b.subarray(p + 8, p + sz))); p += sz; }
+    }
+    for (const ilst of find(ch, 'ilst')) for (const it of boxes(ilst.s, ilst.e)) {
+      const data = find(boxes(it.s, it.e), 'data')[0];
+      if (data) out[names[dv.getUint32(it.s - 4) - 1] ?? it.type] = td.decode(b.subarray(data.s + 8, data.e));
+    }
+  };
+  for (const moov of find(boxes(0, b.length), 'moov')) {
+    const ch = boxes(moov.s, moov.e);
+    find(ch, 'meta').forEach(readMeta);
+    for (const udta of find(ch, 'udta')) find(boxes(udta.s, udta.e), 'meta').forEach(readMeta);
+  }
+  return out;
+}
+
+const isWorkflow = o => o && typeof o === 'object' && Array.isArray(o.nodes);
+const isPrompt = o => o && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length > 0 && Object.values(o).every(n => n && n.class_type);
+function parseMaybe(v) {
+  for (let i = 0; i < 3 && typeof v === 'string'; i++) { try { v = JSON.parse(v); } catch { return null; } }
+  return v;
+}
+function pick(texts) {
+  let workflow = null, prompt = null;
+  for (const v of Object.values(texts)) {
+    const o = parseMaybe(v);
+    if (!o || typeof o !== 'object') continue;
+    if (isWorkflow(o)) workflow ??= o;
+    else if (isPrompt(o)) prompt ??= o;
+    else {
+      const w = parseMaybe(o.workflow), p = parseMaybe(o.prompt);
+      if (isWorkflow(w)) workflow ??= w;
+      if (isPrompt(p)) prompt ??= p;
+    }
+  }
+  return workflow || prompt ? { workflow, prompt } : null;
+}
+
+// Last resort for unknown containers (webm/mkv tags, other tools): find a JSON object holding "nodes".
+function scan(b) {
+  const parts = b.length <= 64e6 ? [b] : [b.subarray(0, 32e6), b.subarray(b.length - 32e6)];
+  for (const part of parts) {
+    const s = td.decode(part);
+    for (let i = s.indexOf('"nodes"'); i >= 0; i = s.indexOf('"nodes"', i + 7)) {
+      for (let j = i; j >= 0 && j > i - 4000; j--) {
+        if (s[j] !== '{') continue;
+        const e = jsonEnd(s, j);
+        if (e < 0) continue;
+        try { const o = JSON.parse(s.slice(j, e)); if (isWorkflow(o) && o.links) return { workflow: o, prompt: null }; } catch {}
+      }
+    }
+  }
+  return null;
+}
+
+async function load(file) {
+  const b = new Uint8Array(await file.arrayBuffer());
+  const sig = (a, z) => tl.decode(b.subarray(a, z));
+  let texts = {};
+  if (b[0] === 0x89 && sig(1, 4) === 'PNG') texts = await pngTexts(b);
+  else if (sig(0, 4) === 'RIFF' && sig(8, 12) === 'WEBP') texts = webpTexts(b);
+  else if (sig(4, 8) === 'ftyp') texts = mp4Texts(b);
+  let r = pick(texts);
+  if (!r && b.length < 64e6) r = pick({ json: td.decode(b).replace(/^﻿/, '') });
+  r ??= scan(b);
+  if (!r) return toast('Aucun workflow trouvé dans ' + file.name);
+  openDoc(r, file.name);
+}
+
+// ---------- graph model ----------
+const xy = p => [Number(p?.[0] ?? p?.x ?? 0), Number(p?.[1] ?? p?.y ?? 0)];
+
+function normLinks(links) {
+  return (links || []).filter(Boolean).map(l => Array.isArray(l)
+    ? { id: l[0], o: l[1], os: l[2], t: l[3], ts: l[4], type: l[5] }
+    : { id: l.id, o: l.origin_id, os: l.origin_slot, t: l.target_id, ts: l.target_slot, type: l.type });
+}
+
+function widgetsOf(n, ins, apiIn) {
+  const named = n.widgets_values_named, vals = n.widgets_values;
+  if (named && typeof named === 'object') return Object.entries(named).map(([k, v]) => {
+    const i = ins.find(i => i.widget === k);
+    return { name: i?.label || k, value: v, linked: i?.link != null };
+  });
+  if (vals == null) return [];
+  if (!Array.isArray(vals)) return Object.entries(vals).filter(([, v]) => typeof v !== 'object' || v === null).map(([k, v]) => ({ name: k, value: v }));
+  let names = ins.filter(i => i.widget).map(i => ({ name: i.label || i.widget, linked: i.link != null }));
+  if (!names.length && apiIn) names = Object.keys(apiIn).filter(k => !Array.isArray(apiIn[k])).map(k => ({ name: k }));
+  const out = [];
+  let vi = 0;
+  for (const nm of names) {
+    if (vi >= vals.length) break;
+    const v = vals[vi++];
+    out.push({ name: nm.name, value: v, linked: nm.linked });
+    if (typeof v === 'number' && CONTROL.has(vals[vi])) vi++;
+  }
+  for (; vi < vals.length; vi++) out.push({ name: '', value: vals[vi] });
+  return out;
+}
+
+function buildUI(g, path) {
+  const nodes = [];
+  for (const n of g.nodes || []) {
+    const def = doc.defs.get(n.type);
+    const [x, y] = xy(n.pos), [w, h] = xy(n.size);
+    const ins = (n.inputs || []).map((i, idx) => ({ idx, label: i.label || i.localized_name || i.name, type: i.type, link: i.link, widget: i.widget?.name }));
+    nodes.push({
+      id: n.id, raw: n, x, y, w: w || 200, h: h || 40, mode: n.mode || 0, collapsed: !!n.flags?.collapsed, color: n.color, bgcolor: n.bgcolor,
+      title: n.title || def?.name || n.type, type: def ? 'Sous-graphe · ' + (def.name || n.type) : n.type,
+      inputs: ins.filter(i => !i.widget || i.link != null),
+      outputs: (n.outputs || []).map((o, idx) => ({ idx, label: o.label || o.localized_name || o.name, type: o.type })),
+      widgets: widgetsOf(n, ins, doc.prompt?.[[...path, n.id].join(':')]?.inputs),
+      sub: def ? { def, path: [...path, n.id] } : null,
+    });
+  }
+  const io = (box, id, title, list, side) => {
+    if (!box) return;
+    const [x, y, w, h] = box.bounding;
+    const slots = (list || []).map((s, idx) => ({ idx, label: s.label || s.name, type: s.type }));
+    nodes.push({ id, x, y, w, h, title, type: title, mode: 0, color: '#2a3a4a', bgcolor: '#26303a', widgets: [], inputs: side === 'in' ? slots : [], outputs: side === 'out' ? slots : [] });
+  };
+  io(g.inputNode, -10, 'Entrées du sous-graphe', g.inputs, 'out');
+  io(g.outputNode, -20, 'Sorties du sous-graphe', g.outputs, 'in');
+  const links = normLinks(g.links);
+  if (!path.length) for (const u of g.extra?.ue_links || [])
+    links.push({ o: u.upstream, os: u.upstream_slot, t: u.downstream, ts: u.downstream_slot, type: u.type, ue: true });
+  return { nodes, links, groups: (g.groups || []).map(gr => ({ title: gr.title, b: gr.bounding, color: gr.color, size: gr.font_size })) };
+}
+
+function buildAPI(p) {
+  const depth = {};
+  const d = id => {
+    if (depth[id] != null) return depth[id];
+    depth[id] = 0;
+    let m = 0;
+    for (const v of Object.values(p[id].inputs || {})) if (Array.isArray(v) && p[v[0]]) m = Math.max(m, d(String(v[0])) + 1);
+    return depth[id] = m;
+  };
+  const outs = {}, links = [];
+  const nodes = Object.keys(p).map(id => {
+    const n = p[id], inputs = [], widgets = [];
+    for (const [k, v] of Object.entries(n.inputs || {})) {
+      if (Array.isArray(v) && v.length === 2 && p[v[0]]) {
+        const type = API_NAME_TYPES[k] || k.toUpperCase();
+        inputs.push({ idx: inputs.length, label: k, type });
+        links.push({ o: String(v[0]), os: v[1], t: id, ts: inputs.length - 1, type });
+        outs[v[0]] = Math.max(outs[v[0]] ?? 0, v[1] + 1);
+      } else widgets.push({ name: k, value: v });
+    }
+    d(id);
+    return { id, raw: n, title: n._meta?.title || n.class_type, type: n.class_type, mode: 0, inputs, widgets };
+  });
+  const colY = {};
+  nodes.sort((a, b) => depth[a.id] - depth[b.id] || Number(a.id) - Number(b.id) || 0);
+  for (const n of nodes) {
+    n.outputs = Array.from({ length: outs[n.id] || 0 }, (_, i) => ({ idx: i, label: '#' + i, type: links.find(l => l.o === n.id && l.os === i)?.type }));
+    const c = depth[n.id];
+    n.w = 300;
+    n.h = Math.max(n.inputs.length, n.outputs.length) * SLOT_H + 8 + Math.min(n.widgets.length, 10) * 22 + 6;
+    n.x = c * 380;
+    n.y = (colY[c] ?? 0) + TITLE_H;
+    colY[c] = n.y + n.h + 30;
+  }
+  return { nodes, links, groups: [] };
+}
+
+function openDoc(r, name) {
+  doc = { ...r, name, defs: new Map((r.workflow?.definitions?.subgraphs || []).map(s => [s.id, s])) };
+  stack = [{ title: name, graph: r.workflow ? buildUI(r.workflow, []) : buildAPI(r.prompt) }];
+  $('#empty').style.display = 'none';
+  closePanel();
+  render();
+  fit();
+  toast(r.workflow ? 'Workflow chargé' : 'Prompt (format API) chargé — disposition automatique');
+}
+
+function enterSub(n) {
+  cur().view = { ...view };
+  stack.push({ title: n.title, graph: buildUI(n.sub.def, n.sub.path) });
+  closePanel(); render(); fit();
+}
+function goTo(level) {
+  if (level >= stack.length - 1) return;
+  stack.length = level + 1;
+  closePanel(); render();
+  view = cur().view || view; apply();
+}
+
+// ---------- rendering ----------
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  parent?.appendChild(e);
+  return e;
+}
+const slotY = (n, i) => n.collapsed ? n.y - TITLE_H / 2 : n.y + 4 + i * SLOT_H + SLOT_H / 2;
+const isText = w => typeof w.value === 'string' && (w.value.includes('\n') || w.value.length > 60);
+
+function layout(n) {
+  if (n.collapsed) { n.cw = Math.min(n.w, n.title.length * 7.5 + 40); n.bh = 0; return; }
+  n.cw = n.w;
+  const shown = n.widgets.filter(w => !w.linked);
+  const top = 4 + Math.max(n.inputs.length, n.outputs.length) * SLOT_H + (shown.length ? 2 : 0);
+  const need = shown.reduce((a, w) => a + (isText(w) ? 48 : 21), 0) + (shown.length ? 6 : 4);
+  n.wtop = top;
+  n.bh = Math.max(n.h, top + Math.min(need, 70), shown.length ? 0 : top);
+}
+
+function render() {
+  const g = cur().graph;
+  world.innerHTML = '';
+  nodeById = new Map(g.nodes.map(n => [String(n.id), n]));
+  g.nodes.forEach(layout);
+  const gl = el('g', {}, world), ll = el('g', {}, world), nl = el('g', {}, world);
+
+  for (const gr of g.groups) {
+    const [x, y, w, h] = gr.b, c = gr.color || '#3f789e', fs = gr.size || 24;
+    el('rect', { x, y, width: w, height: h, rx: 6, fill: c, 'fill-opacity': .22, stroke: c, 'stroke-opacity': .6 }, gl);
+    el('text', { x: x + 10, y: y + fs + 4, 'font-size': fs, class: 'group-title' }, gl).textContent = gr.title || '';
+  }
+
+  for (const n of g.nodes) n.linkEls = [];
+  for (const l of g.links) {
+    const o = nodeById.get(String(l.o)), t = nodeById.get(String(l.t));
+    if (!o || !t) continue;
+    const ti = t.inputs.findIndex(i => i.idx === l.ts);
+    if (ti < 0 && !l.ue) continue;
+    const x1 = o.x + o.cw, y1 = slotY(o, l.os), x2 = t.x, y2 = ti < 0 ? t.y - TITLE_H / 2 : slotY(t, ti);
+    const dx = Math.max(40, Math.abs(x2 - x1) * .5);
+    const p = el('path', { d: `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`, stroke: typeColor(l.type || o.outputs[l.os]?.type), class: 'link' + (l.ue ? ' ue' : '') }, ll);
+    o.linkEls.push(p); t.linkEls.push(p);
+  }
+
+  for (const n of g.nodes) drawNode(n, nl);
+  renderCrumbs();
+  runSearch();
+}
+
+function drawNode(n, parent) {
+  const g = el('g', { class: 'node' + (n.mode === 2 ? ' muted' : ''), 'data-node': n.id }, parent);
+  n.el = g;
+  const { x, y, cw: w, bh } = n;
+  const title = n.color || '#333', body = n.bgcolor || '#353535';
+  el('rect', { x, y: y - TITLE_H, width: w, height: TITLE_H + bh, rx: 6, fill: body, class: 'frame', stroke: '#111' }, g);
+  el('path', { d: `M${x},${y} v${-TITLE_H + 6} a6,6 0 0 1 6,-6 h${w - 12} a6,6 0 0 1 6,6 v${TITLE_H - 6} z`, fill: title }, g);
+  const tt = el('text', { x: x + 10, y: y - 8, class: 'node-title' }, g);
+  const maxChars = Math.max(4, Math.floor((w - (n.sub ? 46 : 24)) / 7));
+  tt.textContent = n.title.length > maxChars ? n.title.slice(0, maxChars - 1) + '…' : n.title;
+  el('title', {}, tt).textContent = n.title + (n.type !== n.title ? '\n' + n.type : '');
+  if (n.sub) {
+    const b = el('text', { x: x + w - 22, y: y - 8, class: 'badge' }, g);
+    b.textContent = '⤵';
+    el('title', {}, b).textContent = 'Ouvrir le sous-graphe (double-clic)';
+    b.addEventListener('click', e => { e.stopPropagation(); enterSub(n); });
+  }
+  if (n.mode === 4) el('rect', { x, y: y - TITLE_H, width: w, height: TITLE_H + bh, rx: 6, fill: '#f0f', 'fill-opacity': .18, 'pointer-events': 'none' }, g);
+  if (n.collapsed) return;
+
+  n.inputs.forEach((s, i) => {
+    el('circle', { cx: x, cy: slotY(n, i), r: 4.5, fill: typeColor(s.type), stroke: '#111' }, g);
+    el('text', { x: x + 10, y: slotY(n, i) + 4, class: 'slot' }, g).textContent = s.label;
+  });
+  n.outputs.forEach((s, i) => {
+    el('circle', { cx: x + w, cy: slotY(n, i), r: 4.5, fill: typeColor(s.type), stroke: '#111' }, g);
+    el('text', { x: x + w - 10, y: slotY(n, i) + 4, class: 'slot', 'text-anchor': 'end' }, g).textContent = s.label;
+  });
+  const shown = n.widgets.filter(w => !w.linked);
+  if (!shown.length) return;
+  const fo = el('foreignObject', { x, y: y + n.wtop, width: w, height: bh - n.wtop }, g);
+  const div = document.createElement('div');
+  div.className = 'body';
+  div.innerHTML = shown.map(wd => {
+    const v = fmt(wd.value), t = isText(wd);
+    return `<div class="w${t ? ' txt' : ''}">${wd.name ? `<span class="k" title="${esc(wd.name)}">${esc(wd.name)}</span>` : ''}<span class="val" data-w="${n.widgets.indexOf(wd)}" title="${t ? 'Cliquer pour copier' : esc(v)}">${esc(v)}</span></div>`;
+  }).join('');
+  fo.appendChild(div);
+}
+
+function renderCrumbs() {
+  $('#crumbs').innerHTML = stack.map((s, i) => i === stack.length - 1 ? `<span>${esc(s.title)}</span>` : `<a data-level="${i}">${esc(s.title)}</a>`).join(' › ');
+}
+
+// ---------- view ----------
+function apply() { world.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`); }
+
+function fit() {
+  const g = cur()?.graph;
+  if (!g || !g.nodes.length) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const n of g.nodes) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y - TITLE_H); x1 = Math.max(x1, n.x + n.cw); y1 = Math.max(y1, n.y + n.bh); }
+  for (const gr of g.groups) { const [x, y, w, h] = gr.b; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h); }
+  const W = svg.clientWidth - (panel.classList.contains('on') ? panel.offsetWidth : 0), H = svg.clientHeight;
+  const k = Math.min(2, Math.max(0.03, Math.min(W / (x1 - x0 + 80), H / (y1 - y0 + 80))));
+  view = { k, x: (W - (x1 - x0) * k) / 2 - x0 * k, y: (H - (y1 - y0) * k) / 2 - y0 * k };
+  apply();
+}
+
+function focusNode(n) {
+  const W = svg.clientWidth - (panel.classList.contains('on') ? panel.offsetWidth : 0), H = svg.clientHeight;
+  const k = Math.max(view.k, 0.8);
+  view = { k, x: W / 2 - (n.x + n.cw / 2) * k, y: H / 2 - (n.y + n.bh / 2 - TITLE_H / 2) * k };
+  apply();
+  n.el.classList.add('flash');
+  setTimeout(() => n.el.classList.remove('flash'), 900);
+}
+
+svg.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const k = Math.min(4, Math.max(0.03, view.k * Math.exp(-e.deltaY * 0.0015)));
+  view.x = mx - (mx - view.x) * k / view.k;
+  view.y = my - (my - view.y) * k / view.k;
+  view.k = k;
+  apply();
+}, { passive: false });
+
+let drag = null;
+svg.addEventListener('pointerdown', e => {
+  if (e.button > 1 || e.target.closest('.val')) return;
+  drag = { sx: e.clientX, sy: e.clientY, x: view.x, y: view.y, moved: false, target: e.target };
+  svg.setPointerCapture(e.pointerId);
+});
+svg.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+  if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+  drag.moved = true;
+  svg.classList.add('panning');
+  view.x = drag.x + dx; view.y = drag.y + dy;
+  apply();
+});
+svg.addEventListener('pointerup', () => {
+  if (drag && !drag.moved) {
+    const g = drag.target.closest('[data-node]');
+    g ? select(nodeById.get(g.dataset.node)) : closePanel();
+  }
+  drag = null;
+  svg.classList.remove('panning');
+});
+svg.addEventListener('dblclick', e => {
+  const g = e.target.closest('[data-node]'), n = g && nodeById.get(g.dataset.node);
+  if (n?.sub) enterSub(n);
+});
+svg.addEventListener('click', e => {
+  const v = e.target.closest('.val');
+  if (!v || getSelection().toString()) return;
+  const n = nodeById.get(v.closest('[data-node]').dataset.node);
+  copy(fmt(n.widgets[v.dataset.w].value));
+  select(n);
+});
+svg.addEventListener('mouseover', e => {
+  const g = e.target.closest('[data-node]'), n = g && nodeById.get(g.dataset.node);
+  svg.classList.toggle('dim', !!n?.linkEls?.length);
+  world.querySelectorAll('.link.hl').forEach(p => p.classList.remove('hl'));
+  n?.linkEls?.forEach(p => p.classList.add('hl'));
+});
+
+// ---------- side panel ----------
+function select(n) {
+  selected?.el?.classList.remove('sel');
+  selected = n;
+  n.el.classList.add('sel');
+  const g = cur().graph;
+  const linkIn = i => g.links.find(l => String(l.t) === String(n.id) && l.ts === i.idx && !l.ue);
+  const ref = id => { const m = nodeById.get(String(id)); return m ? `<a data-goto="${esc(m.id)}">${esc(m.title)}</a>` : esc(id); };
+  const modes = { 2: ' · muet', 4: ' · bypass' };
+  let h = `<button class="close" data-act="close">✕</button><h2>${esc(n.title)}</h2>
+    <div class="meta">${esc(n.type)} · #${esc(n.id)}${modes[n.mode] || ''}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${n.sub ? '<button data-act="enter">Ouvrir le sous-graphe</button>' : ''}${n.raw ? '<button data-act="json">Copier le JSON du nœud</button>' : ''}</div>`;
+  if (n.inputs.length) h += '<h3>Entrées</h3>' + n.inputs.map(i => {
+    const l = linkIn(i);
+    return `<div class="row"><span class="k">${esc(i.label)}</span><span>${l ? '← ' + ref(l.o) : '<i style="color:#666">non connecté</i>'}</span></div>`;
+  }).join('');
+  if (n.outputs.length) h += '<h3>Sorties</h3>' + n.outputs.map(o => {
+    const ts = g.links.filter(l => String(l.o) === String(n.id) && l.os === o.idx);
+    return `<div class="row"><span class="k">${esc(o.label)}</span><span>${ts.length ? '→ ' + [...new Set(ts.map(l => l.t))].map(ref).join(', ') : '<i style="color:#666">—</i>'}</span></div>`;
+  }).join('');
+  if (n.widgets.length) h += '<h3>Valeurs</h3>' + n.widgets.map((w, i) =>
+    `<div class="wv"><div class="hd"><span>${esc(w.name || '(sans nom)')}${w.linked ? ' · connecté' : ''}</span><button data-copy="${i}">Copier</button></div><pre>${esc(fmt(w.value))}</pre></div>`).join('');
+  panel.innerHTML = h;
+  panel.classList.add('on');
+}
+function closePanel() {
+  selected?.el?.classList.remove('sel');
+  selected = null;
+  panel.classList.remove('on');
+}
+panel.addEventListener('click', e => {
+  const t = e.target.closest('[data-act],[data-copy],[data-goto]');
+  if (!t) return;
+  if (t.dataset.copy != null) copy(fmt(selected.widgets[t.dataset.copy].value));
+  else if (t.dataset.goto != null) { const m = nodeById.get(t.dataset.goto); select(m); focusNode(m); }
+  else if (t.dataset.act === 'close') closePanel();
+  else if (t.dataset.act === 'enter') enterSub(selected);
+  else if (t.dataset.act === 'json') copy(JSON.stringify(selected.raw, null, 2));
+});
+
+// ---------- search ----------
+function runSearch() {
+  const q = $('#search').value.trim().toLowerCase();
+  world.querySelectorAll('.node.match').forEach(e => e.classList.remove('match'));
+  matches = !q || !stack.length ? [] : cur().graph.nodes.filter(n =>
+    [n.title, n.type, n.id, ...n.widgets.map(w => fmt(w.value))].some(s => String(s).toLowerCase().includes(q)));
+  matches.forEach(n => n.el.classList.add('match'));
+  matchIdx = -1;
+  $('#count').textContent = q ? `${matches.length} trouvé${matches.length > 1 ? 's' : ''}` : '';
+}
+$('#search').addEventListener('input', runSearch);
+$('#search').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !matches.length) return;
+  matchIdx = (matchIdx + (e.shiftKey ? -1 : 1) + matches.length) % matches.length;
+  $('#count').textContent = `${matchIdx + 1}/${matches.length}`;
+  focusNode(matches[matchIdx]);
+  select(matches[matchIdx]);
+});
+
+// ---------- misc ----------
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), 1600);
+}
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  toast(`Copié (${text.length} caractères)`);
+}
+const docJSON = () => doc && JSON.stringify(doc.workflow || doc.prompt, null, doc.workflow ? 0 : 2);
+
+$('#openBtn').onclick = () => $('#file').click();
+$('#file').onchange = e => { const f = e.target.files[0]; if (f) load(f); e.target.value = ''; };
+$('#fitBtn').onclick = fit;
+$('#copyBtn').onclick = () => doc && copy(docJSON());
+$('#saveBtn').onclick = () => {
+  if (!doc) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([docJSON()], { type: 'application/json' }));
+  a.download = doc.name.replace(/\.[^.]+$/, '') + (doc.workflow ? '' : '_api') + '.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$('#crumbs').addEventListener('click', e => { const a = e.target.closest('[data-level]'); if (a) goTo(+a.dataset.level); });
+
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+addEventListener('drop', e => {
+  e.preventDefault();
+  document.body.classList.remove('dragging');
+  const f = e.dataTransfer.files[0];
+  if (f) load(f);
+});
+addEventListener('paste', e => {
+  if (e.target.closest?.('input')) return;
+  const f = e.clipboardData.files[0];
+  if (f) return load(f);
+  const r = pick({ text: e.clipboardData.getData('text') });
+  r ? openDoc(r, 'collé') : toast('Le presse-papiers ne contient pas de workflow');
+});
+addEventListener('keydown', e => {
+  if (e.target.closest('input')) { if (e.key === 'Escape') e.target.blur(); return; }
+  if (e.key === '/' || (e.key === 'f' && e.ctrlKey)) { e.preventDefault(); $('#search').focus(); }
+  else if (e.key === 'f' || e.key === 'F') fit();
+  else if (e.key === 'Escape') panel.classList.contains('on') ? closePanel() : goTo(stack.length - 2);
+  else if (e.key === 'Backspace') goTo(stack.length - 2);
+});
+addEventListener('resize', () => doc && apply());
+</script>
+</body>
+</html>
