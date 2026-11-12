@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -60,19 +60,19 @@
 </head>
 <body>
 <div id="bar">
-  <button id="openBtn" title="Ouvrir un fichier (.json, .png, .webp, .mp4, .webm…)">Ouvrir…</button>
+  <button id="openBtn" title="Open a file (.json, .png, .webp, .mp4, .webm…)">Open…</button>
   <input id="file" type="file" hidden accept=".json,.png,.webp,.mp4,.mov,.webm,.mkv,application/json,image/*,video/*">
   <span id="crumbs"></span>
-  <input id="search" placeholder="Rechercher… (Entrée = suivant)">
+  <input id="search" placeholder="Search… (Enter = next)">
   <span id="count"></span>
-  <button id="fitBtn" title="Ajuster la vue (F)">Ajuster</button>
-  <button id="copyBtn" title="Copier le workflow JSON">Copier JSON</button>
-  <button id="saveBtn" title="Enregistrer le workflow en .json">.json</button>
+  <button id="fitBtn" title="Fit view (F)">Fit</button>
+  <button id="copyBtn" title="Copy workflow JSON">Copy JSON</button>
+  <button id="saveBtn" title="Save workflow as .json">.json</button>
 </div>
 <svg id="view" xmlns="http://www.w3.org/2000/svg"><g id="world"></g></svg>
-<div id="empty"><div>Déposez un workflow ComfyUI ici</div><div style="font-size:12px">.json · .png · .webp · .mp4 · .webm — ou collez (Ctrl+V)</div></div>
+<div id="empty"><div>Drop a ComfyUI workflow here</div><div style="font-size:12px">.json · .png · .webp · .mp4 · .webm — or paste (Ctrl+V)</div></div>
 <div id="panel"></div>
-<div id="drop">Déposer le fichier</div>
+<div id="drop">Drop file</div>
 <div id="toast"></div>
 <script>
 const $ = s => document.querySelector(s);
@@ -233,7 +233,7 @@ async function load(file) {
   let r = pick(texts);
   if (!r && b.length < 64e6) r = pick({ json: td.decode(b).replace(/^﻿/, '') });
   r ??= scan(b);
-  if (!r) return toast('Aucun workflow trouvé dans ' + file.name);
+  if (!r) return toast('No workflow found in ' + file.name);
   openDoc(r, file.name);
 }
 
@@ -276,7 +276,7 @@ function buildUI(g, path) {
     const ins = (n.inputs || []).map((i, idx) => ({ idx, label: i.label || i.localized_name || i.name, type: i.type, link: i.link, widget: i.widget?.name }));
     nodes.push({
       id: n.id, raw: n, x, y, w: w || 200, h: h || 40, mode: n.mode || 0, collapsed: !!n.flags?.collapsed, color: n.color, bgcolor: n.bgcolor,
-      title: n.title || def?.name || n.type, type: def ? 'Sous-graphe · ' + (def.name || n.type) : n.type,
+      title: n.title || def?.name || n.type, type: def ? 'Subgraph · ' + (def.name || n.type) : n.type,
       inputs: ins.filter(i => !i.widget || i.link != null),
       outputs: (n.outputs || []).map((o, idx) => ({ idx, label: o.label || o.localized_name || o.name, type: o.type })),
       widgets: widgetsOf(n, ins, doc.prompt?.[[...path, n.id].join(':')]?.inputs),
@@ -289,8 +289,8 @@ function buildUI(g, path) {
     const slots = (list || []).map((s, idx) => ({ idx, label: s.label || s.name, type: s.type }));
     nodes.push({ id, x, y, w, h, title, type: title, mode: 0, color: '#2a3a4a', bgcolor: '#26303a', widgets: [], inputs: side === 'in' ? slots : [], outputs: side === 'out' ? slots : [] });
   };
-  io(g.inputNode, -10, 'Entrées du sous-graphe', g.inputs, 'out');
-  io(g.outputNode, -20, 'Sorties du sous-graphe', g.outputs, 'in');
+  io(g.inputNode, -10, 'Subgraph inputs', g.inputs, 'out');
+  io(g.outputNode, -20, 'Subgraph outputs', g.outputs, 'in');
   const links = normLinks(g.links);
   if (!path.length) for (const u of g.extra?.ue_links || [])
     links.push({ o: u.upstream, os: u.upstream_slot, t: u.downstream, ts: u.downstream_slot, type: u.type, ue: true });
@@ -341,7 +341,7 @@ function openDoc(r, name) {
   closePanel();
   render();
   fit();
-  toast(r.workflow ? 'Workflow chargé' : 'Prompt (format API) chargé — disposition automatique');
+  toast(r.workflow ? 'Workflow loaded' : 'API prompt loaded — automatic layout');
 }
 
 function enterSub(n) {
@@ -420,7 +420,7 @@ function drawNode(n, parent) {
   if (n.sub) {
     const b = el('text', { x: x + w - 22, y: y - 8, class: 'badge' }, g);
     b.textContent = '⤵';
-    el('title', {}, b).textContent = 'Ouvrir le sous-graphe (double-clic)';
+    el('title', {}, b).textContent = 'Open subgraph (double-click)';
     b.addEventListener('click', e => { e.stopPropagation(); enterSub(n); });
   }
   if (n.mode === 4) el('rect', { x, y: y - TITLE_H, width: w, height: TITLE_H + bh, rx: 6, fill: '#f0f', 'fill-opacity': .18, 'pointer-events': 'none' }, g);
@@ -441,7 +441,7 @@ function drawNode(n, parent) {
   div.className = 'body';
   div.innerHTML = shown.map(wd => {
     const v = fmt(wd.value), t = isText(wd);
-    return `<div class="w${t ? ' txt' : ''}">${wd.name ? `<span class="k" title="${esc(wd.name)}">${esc(wd.name)}</span>` : ''}<span class="val" data-w="${n.widgets.indexOf(wd)}" title="${t ? 'Cliquer pour copier' : esc(v)}">${esc(v)}</span></div>`;
+    return `<div class="w${t ? ' txt' : ''}">${wd.name ? `<span class="k" title="${esc(wd.name)}">${esc(wd.name)}</span>` : ''}<span class="val" data-w="${n.widgets.indexOf(wd)}" title="${t ? 'Click to copy' : esc(v)}">${esc(v)}</span></div>`;
   }).join('');
   fo.appendChild(div);
 }
@@ -533,20 +533,20 @@ function select(n) {
   const g = cur().graph;
   const linkIn = i => g.links.find(l => String(l.t) === String(n.id) && l.ts === i.idx && !l.ue);
   const ref = id => { const m = nodeById.get(String(id)); return m ? `<a data-goto="${esc(m.id)}">${esc(m.title)}</a>` : esc(id); };
-  const modes = { 2: ' · muet', 4: ' · bypass' };
+  const modes = { 2: ' · muted', 4: ' · bypass' };
   let h = `<button class="close" data-act="close">✕</button><h2>${esc(n.title)}</h2>
     <div class="meta">${esc(n.type)} · #${esc(n.id)}${modes[n.mode] || ''}</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap">${n.sub ? '<button data-act="enter">Ouvrir le sous-graphe</button>' : ''}${n.raw ? '<button data-act="json">Copier le JSON du nœud</button>' : ''}</div>`;
-  if (n.inputs.length) h += '<h3>Entrées</h3>' + n.inputs.map(i => {
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${n.sub ? '<button data-act="enter">Open subgraph</button>' : ''}${n.raw ? '<button data-act="json">Copy node JSON</button>' : ''}</div>`;
+  if (n.inputs.length) h += '<h3>Inputs</h3>' + n.inputs.map(i => {
     const l = linkIn(i);
-    return `<div class="row"><span class="k">${esc(i.label)}</span><span>${l ? '← ' + ref(l.o) : '<i style="color:#666">non connecté</i>'}</span></div>`;
+    return `<div class="row"><span class="k">${esc(i.label)}</span><span>${l ? '← ' + ref(l.o) : '<i style="color:#666">not connected</i>'}</span></div>`;
   }).join('');
-  if (n.outputs.length) h += '<h3>Sorties</h3>' + n.outputs.map(o => {
+  if (n.outputs.length) h += '<h3>Outputs</h3>' + n.outputs.map(o => {
     const ts = g.links.filter(l => String(l.o) === String(n.id) && l.os === o.idx);
     return `<div class="row"><span class="k">${esc(o.label)}</span><span>${ts.length ? '→ ' + [...new Set(ts.map(l => l.t))].map(ref).join(', ') : '<i style="color:#666">—</i>'}</span></div>`;
   }).join('');
-  if (n.widgets.length) h += '<h3>Valeurs</h3>' + n.widgets.map((w, i) =>
-    `<div class="wv"><div class="hd"><span>${esc(w.name || '(sans nom)')}${w.linked ? ' · connecté' : ''}</span><button data-copy="${i}">Copier</button></div><pre>${esc(fmt(w.value))}</pre></div>`).join('');
+  if (n.widgets.length) h += '<h3>Values</h3>' + n.widgets.map((w, i) =>
+    `<div class="wv"><div class="hd"><span>${esc(w.name || '(unnamed)')}${w.linked ? ' · linked' : ''}</span><button data-copy="${i}">Copy</button></div><pre>${esc(fmt(w.value))}</pre></div>`).join('');
   panel.innerHTML = h;
   panel.classList.add('on');
 }
@@ -573,7 +573,7 @@ function runSearch() {
     [n.title, n.type, n.id, ...n.widgets.map(w => fmt(w.value))].some(s => String(s).toLowerCase().includes(q)));
   matches.forEach(n => n.el.classList.add('match'));
   matchIdx = -1;
-  $('#count').textContent = q ? `${matches.length} trouvé${matches.length > 1 ? 's' : ''}` : '';
+  $('#count').textContent = q ? `${matches.length} found` : '';
 }
 $('#search').addEventListener('input', runSearch);
 $('#search').addEventListener('keydown', e => {
@@ -599,7 +599,7 @@ async function copy(text) {
     const ta = document.createElement('textarea');
     ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
   }
-  toast(`Copié (${text.length} caractères)`);
+  toast(`Copied (${text.length} chars)`);
 }
 const docJSON = () => doc && JSON.stringify(doc.workflow || doc.prompt, null, doc.workflow ? 0 : 2);
 
@@ -630,7 +630,7 @@ addEventListener('paste', e => {
   const f = e.clipboardData.files[0];
   if (f) return load(f);
   const r = pick({ text: e.clipboardData.getData('text') });
-  r ? openDoc(r, 'collé') : toast('Le presse-papiers ne contient pas de workflow');
+  r ? openDoc(r, 'pasted') : toast('Clipboard does not contain a workflow');
 });
 addEventListener('keydown', e => {
   if (e.target.closest('input')) { if (e.key === 'Escape') e.target.blur(); return; }

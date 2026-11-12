@@ -14,7 +14,7 @@ Or download `index.html` and open it locally.
 - `.mp4` / `.mov` — container metadata (native ComfyUI and VideoHelperSuite)
 - anything else (`.webm`, `.mkv`…) — raw scan for an embedded workflow
 
-Drop a file on the page, use **Ouvrir…**, or paste (Ctrl+V).
+Drop a file on the page, use **Open…**, or paste (Ctrl+V).
 
 ## Usage
 
@@ -22,4 +22,4 @@ Drop a file on the page, use **Ouvrir…**, or paste (Ctrl+V).
 - Click a widget value to copy it; click a node for the side panel with full values and connections.
 - Double-click a subgraph node (or ⤵) to enter it; `Esc` / breadcrumb to go back.
 - Search with `/` or Ctrl+F, Enter for next match.
-- **Copier JSON** / **.json** extracts the workflow from an image or video.
+- **Copy JSON** / **.json** extracts the workflow from an image or video.
