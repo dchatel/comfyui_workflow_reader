@@ -48,7 +48,14 @@
   .node.match .frame { stroke:#ffd54a; stroke-width:3; }
   .node.flash .frame { stroke:#6aa8ff; stroke-width:5; }
   .node.muted { opacity:.4; }
-  .node .badge { cursor:pointer; fill:#8ab4ff; font-size:13px; }
+  .node { cursor:move; }
+  .node .badge, .node .toggle { cursor:pointer; font-size:13px; }
+  .node .badge { fill:#8ab4ff; }
+  .node .toggle { fill:#bbb; }
+  .node.lt .node-title, .node.lt .toggle { fill:#111; }
+  .node.lt .badge { fill:#1a4fa0; }
+  .node.lb .slot { fill:#222; }
+  .node.lb .w .k { color:#333; }
   .body { width:100%; height:100%; overflow:hidden; display:flex; flex-direction:column; gap:3px; padding:2px 8px 4px; font:12px system-ui, sans-serif; color:#ddd; }
   .w { display:flex; gap:6px; align-items:center; min-height:18px; flex:none; }
   .w .k { color:#9a9a9a; flex:none; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -66,6 +73,7 @@
   <input id="search" placeholder="Search… (Enter = next)">
   <span id="count"></span>
   <button id="fitBtn" title="Fit view (F)">Fit</button>
+  <button id="expandBtn" title="Expand all collapsed nodes">Expand all</button>
   <button id="copyBtn" title="Copy workflow JSON">Copy JSON</button>
   <button id="saveBtn" title="Save workflow as .json">.json</button>
 </div>
@@ -287,7 +295,7 @@ function buildUI(g, path) {
     if (!box) return;
     const [x, y, w, h] = box.bounding;
     const slots = (list || []).map((s, idx) => ({ idx, label: s.label || s.name, type: s.type }));
-    nodes.push({ id, x, y, w, h, title, type: title, mode: 0, color: '#2a3a4a', bgcolor: '#26303a', widgets: [], inputs: side === 'in' ? slots : [], outputs: side === 'out' ? slots : [] });
+    nodes.push({ id, x, y, w, h, title, type: title, mode: 0, pseudo: true, color: '#2a3a4a', bgcolor: '#26303a', widgets: [], inputs: side === 'in' ? slots : [], outputs: side === 'out' ? slots : [] });
   };
   io(g.inputNode, -10, 'Subgraph inputs', g.inputs, 'out');
   io(g.outputNode, -20, 'Subgraph outputs', g.outputs, 'in');
@@ -363,11 +371,21 @@ function el(tag, attrs, parent) {
   parent?.appendChild(e);
   return e;
 }
-const slotY = (n, i) => n.collapsed ? n.y - TITLE_H / 2 : n.y + 4 + i * SLOT_H + SLOT_H / 2;
+// Node-local y of slot i (nodes are drawn at their own origin and moved with a transform).
+const slotY = (n, i) => n.collapsed ? -TITLE_H / 2 : 4 + i * SLOT_H + SLOT_H / 2;
+const cctx = document.createElement('canvas').getContext('2d');
+function isLight(color) {
+  cctx.fillStyle = '#000';
+  cctx.fillStyle = color;
+  const s = cctx.fillStyle;
+  const rgb = s[0] === '#' ? [1, 3, 5].map(i => parseInt(s.slice(i, i + 2), 16)) : s.match(/[\d.]+/g).slice(0, 3).map(Number);
+  const [r, g, b] = rgb.map(c => (c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.179;
+}
 const isText = w => typeof w.value === 'string' && (w.value.includes('\n') || w.value.length > 60);
 
 function layout(n) {
-  if (n.collapsed) { n.cw = Math.min(n.w, n.title.length * 7.5 + 40); n.bh = 0; return; }
+  if (n.collapsed) { n.cw = n.title.length * 7.5 + (n.sub ? 70 : 48); n.bh = 0; return; }
   n.cw = n.w;
   const shown = n.widgets.filter(w => !w.linked);
   const top = 4 + Math.max(n.inputs.length, n.outputs.length) * SLOT_H + (shown.length ? 2 : 0);
@@ -395,33 +413,49 @@ function render() {
     if (!o || !t) continue;
     const ti = t.inputs.findIndex(i => i.idx === l.ts);
     if (ti < 0 && !l.ue) continue;
-    const x1 = o.x + o.cw, y1 = slotY(o, l.os), x2 = t.x, y2 = ti < 0 ? t.y - TITLE_H / 2 : slotY(t, ti);
-    const dx = Math.max(40, Math.abs(x2 - x1) * .5);
-    const p = el('path', { d: `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`, stroke: typeColor(l.type || o.outputs[l.os]?.type), class: 'link' + (l.ue ? ' ue' : '') }, ll);
-    o.linkEls.push(p); t.linkEls.push(p);
+    const k = { o, t, l, ti, p: el('path', { stroke: typeColor(l.type || o.outputs[l.os]?.type), class: 'link' + (l.ue ? ' ue' : '') }, ll) };
+    linkPath(k);
+    o.linkEls.push(k); t.linkEls.push(k);
   }
 
   for (const n of g.nodes) drawNode(n, nl);
+  selected?.el.classList.add('sel');
   renderCrumbs();
   runSearch();
 }
 
+function linkPath({ o, t, l, ti, p }) {
+  const x1 = o.x + o.cw, y1 = o.y + slotY(o, l.os), x2 = t.x, y2 = t.y + (ti < 0 ? -TITLE_H / 2 : slotY(t, ti));
+  const dx = Math.max(40, Math.abs(x2 - x1) * .5);
+  p.setAttribute('d', `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`);
+}
+
+function toggleCollapse(n) {
+  n.collapsed = !n.collapsed;
+  render();
+}
+
 function drawNode(n, parent) {
-  const g = el('g', { class: 'node' + (n.mode === 2 ? ' muted' : ''), 'data-node': n.id }, parent);
-  n.el = g;
-  const { x, y, cw: w, bh } = n;
   const title = n.color || '#333', body = n.bgcolor || '#353535';
+  const cls = 'node' + (n.mode === 2 ? ' muted' : '') + (isLight(title) ? ' lt' : '') + (isLight(body) ? ' lb' : '');
+  const g = el('g', { class: cls, 'data-node': n.id, transform: `translate(${n.x},${n.y})` }, parent);
+  n.el = g;
+  const x = 0, y = 0, { cw: w, bh } = n;
   el('rect', { x, y: y - TITLE_H, width: w, height: TITLE_H + bh, rx: 6, fill: body, class: 'frame', stroke: '#111' }, g);
   el('path', { d: `M${x},${y} v${-TITLE_H + 6} a6,6 0 0 1 6,-6 h${w - 12} a6,6 0 0 1 6,6 v${TITLE_H - 6} z`, fill: title }, g);
-  const tt = el('text', { x: x + 10, y: y - 8, class: 'node-title' }, g);
-  const maxChars = Math.max(4, Math.floor((w - (n.sub ? 46 : 24)) / 7));
+  if (!n.pseudo) {
+    const tg = el('text', { x: x + 7, y: y - 8, class: 'toggle' }, g);
+    tg.textContent = n.collapsed ? '▸' : '▾';
+    el('title', {}, tg).textContent = n.collapsed ? 'Expand' : 'Collapse';
+  }
+  const tt = el('text', { x: x + 22, y: y - 8, class: 'node-title' }, g);
+  const maxChars = Math.max(4, Math.floor((w - (n.sub ? 58 : 36)) / 7));
   tt.textContent = n.title.length > maxChars ? n.title.slice(0, maxChars - 1) + '…' : n.title;
   el('title', {}, tt).textContent = n.title + (n.type !== n.title ? '\n' + n.type : '');
   if (n.sub) {
     const b = el('text', { x: x + w - 22, y: y - 8, class: 'badge' }, g);
     b.textContent = '⤵';
     el('title', {}, b).textContent = 'Open subgraph (double-click)';
-    b.addEventListener('click', e => { e.stopPropagation(); enterSub(n); });
   }
   if (n.mode === 4) el('rect', { x, y: y - TITLE_H, width: w, height: TITLE_H + bh, rx: 6, fill: '#f0f', 'fill-opacity': .18, 'pointer-events': 'none' }, g);
   if (n.collapsed) return;
@@ -485,24 +519,38 @@ svg.addEventListener('wheel', e => {
 }, { passive: false });
 
 let drag = null;
+// Dragging a node moves it, dragging the background pans. Capture starts only once the pointer moves, so clicks keep their real target.
 svg.addEventListener('pointerdown', e => {
   if (e.button > 1 || e.target.closest('.val')) return;
-  drag = { sx: e.clientX, sy: e.clientY, x: view.x, y: view.y, moved: false, target: e.target };
-  svg.setPointerCapture(e.pointerId);
+  const g = e.button === 0 && e.target.closest('[data-node]'), n = g && nodeById.get(g.dataset.node);
+  drag = { sx: e.clientX, sy: e.clientY, x: n ? n.x : view.x, y: n ? n.y : view.y, node: n, moved: false, target: e.target };
 });
 svg.addEventListener('pointermove', e => {
   if (!drag) return;
   const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
-  if (!drag.moved && Math.hypot(dx, dy) < 4) return;
-  drag.moved = true;
-  svg.classList.add('panning');
-  view.x = drag.x + dx; view.y = drag.y + dy;
-  apply();
+  if (!drag.moved) {
+    if (Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    svg.setPointerCapture(e.pointerId);
+    if (drag.node) drag.node.el.parentNode.appendChild(drag.node.el);
+    else svg.classList.add('panning');
+  }
+  const n = drag.node;
+  if (n) {
+    n.x = drag.x + dx / view.k; n.y = drag.y + dy / view.k;
+    n.el.setAttribute('transform', `translate(${n.x},${n.y})`);
+    n.linkEls.forEach(linkPath);
+  } else {
+    view.x = drag.x + dx; view.y = drag.y + dy;
+    apply();
+  }
 });
 svg.addEventListener('pointerup', () => {
   if (drag && !drag.moved) {
-    const g = drag.target.closest('[data-node]');
-    g ? select(nodeById.get(g.dataset.node)) : closePanel();
+    const t = drag.target, n = drag.node;
+    if (t.closest('.toggle')) toggleCollapse(n);
+    else if (t.closest('.badge')) enterSub(n);
+    else n ? select(n) : closePanel();
   }
   drag = null;
   svg.classList.remove('panning');
@@ -522,7 +570,7 @@ svg.addEventListener('mouseover', e => {
   const g = e.target.closest('[data-node]'), n = g && nodeById.get(g.dataset.node);
   svg.classList.toggle('dim', !!n?.linkEls?.length);
   world.querySelectorAll('.link.hl').forEach(p => p.classList.remove('hl'));
-  n?.linkEls?.forEach(p => p.classList.add('hl'));
+  n?.linkEls?.forEach(k => k.p.classList.add('hl'));
 });
 
 // ---------- side panel ----------
@@ -606,6 +654,11 @@ const docJSON = () => doc && JSON.stringify(doc.workflow || doc.prompt, null, do
 $('#openBtn').onclick = () => $('#file').click();
 $('#file').onchange = e => { const f = e.target.files[0]; if (f) load(f); e.target.value = ''; };
 $('#fitBtn').onclick = fit;
+$('#expandBtn').onclick = () => {
+  if (!stack.length) return;
+  cur().graph.nodes.forEach(n => n.collapsed = false);
+  render();
+};
 $('#copyBtn').onclick = () => doc && copy(docJSON());
 $('#saveBtn').onclick = () => {
   if (!doc) return;
